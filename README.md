@@ -21,7 +21,8 @@ This command will create 7 charts.
 - The legend flows left to right and continues on new rows only when needed,
   without truncating case names. It resizes with the window (which remains
   freely resizable), uses a slightly smaller font in short windows, and is
-  included in PDF exports. Click a legend label to highlight its curve.
+  included in PDF exports. Click a curve or its legend label to highlight it
+  (click again to remove the highlight); dragging in the plot still zooms.
 - Option -z ignors all summary vectors which only holds zero values.
 - You can easily export all charts to a PDF file 
    * \<ctrl\> + p and use the file save dialog

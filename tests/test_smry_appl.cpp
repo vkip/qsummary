@@ -53,6 +53,7 @@ private slots:
     void test_scale_axis_ctrl_x();
     void test_many_cases_data();
     void test_many_cases();
+    void test_click_curve();
 };
 
 const int max_number_of_charts = 2000;
@@ -214,6 +215,120 @@ void TestQsummary::test_many_cases()
     QCOMPARE(window.number_of_series(0), size_t(0));
     QVERIFY(labels().isEmpty());
     QCOMPARE(chart->margins().bottom(), 20);
+}
+
+void TestQsummary::test_click_curve()
+{
+    std::vector<std::string> files = {"../tests/smry_files/SENS0.ESMRY",
+                                      "../tests/smry_files/SENS1.ESMRY",
+                                      "../tests/smry_files/SENS2.ESMRY"};
+    std::vector<SmryAppl::vect_input_type> vectors;
+    for (int n = 0; n < 3; ++n)
+        vectors.emplace_back(n, "FPR", -1, false);
+
+    auto loaders = QSum::make_loaders(files);
+    SmryAppl::input_list_type input{{vectors, ""}};
+    std::unique_ptr<DerivedSmry> derived;
+    SmryAppl window(files, loaders, input, derived);
+    window.resize(1400, 700);
+    window.show();
+    QTest::qWait(50);
+
+    auto chart = window.get_chart(0);
+    auto view = window.get_chartview(0);
+    auto curves = window.get_smry_series(0);
+    const auto to_view = [&](const QPointF& chart_pos) {
+        return view->mapFromScene(chart->mapToScene(chart_pos));
+    };
+
+    // Find a point on each curve that is well separated from all other curves.
+    const auto distance_to = [&](QXYSeries* series, const QPointF& pos) {
+        qreal best = std::numeric_limits<qreal>::max();
+        for (const auto& p : series->points())
+            best = std::min(best, QLineF(chart->mapToPosition(p, series), pos).length());
+        return best;
+    };
+    const auto unique_point = [&](int index) {
+        for (const auto& p : curves[index]->points()) {
+            const QPointF pos = chart->mapToPosition(p, curves[index]);
+            if (!chart->plotArea().adjusted(5, 5, -5, -5).contains(pos))
+                continue;
+            bool separated = true;
+            for (int other = 0; other < 3; ++other)
+                if (other != index && distance_to(curves[other], pos) < 30)
+                    separated = false;
+            if (separated)
+                return std::optional<QPointF>(pos);
+        }
+        return std::optional<QPointF>();
+    };
+
+    const auto xrange = window.get_smry_xaxis(0)->get_xrange();
+    const auto labels = [&]() {
+        std::map<QString, QGraphicsTextItem *> result;
+        for (auto item : view->scene()->items())
+            if (auto text = dynamic_cast<QGraphicsTextItem *>(item))
+                result[text->toPlainText()] = text;
+        return result;
+    };
+
+    int tested = 0;
+    for (int index = 0; index < 3; ++index) {
+        const auto pos = unique_point(index);
+        if (!pos)
+            continue;
+        ++tested;
+
+        // Clicking slightly off the curve, within the tolerance, toggles only that curve.
+        QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, to_view(*pos + QPointF(0, 3)));
+        QCoreApplication::processEvents();
+        for (int n = 0; n < 3; ++n)
+            QCOMPARE(curves[n]->isHighlighted(), n == index);
+        QCOMPARE(curves[index]->pen().width(), 4);
+        QVERIFY(labels().at(curves[index]->name())->font().bold());
+        QCOMPARE(window.get_smry_xaxis(0)->get_xrange(), xrange);
+
+        QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, to_view(*pos));
+        QCoreApplication::processEvents();
+        QVERIFY(!curves[index]->isHighlighted());
+        QCOMPARE(curves[index]->pen().width(), 2);
+        QVERIFY(!labels().at(curves[index]->name())->font().bold());
+    }
+    QVERIFY(tested >= 2);
+
+    // Clicking empty plot area changes nothing.
+    QPointF empty;
+    bool found_empty = false;
+    const auto plot = chart->plotArea();
+    for (qreal x = plot.left() + 10; x < plot.right() && !found_empty; x += 20)
+        for (qreal y = plot.top() + 10; y < plot.bottom() && !found_empty; y += 20) {
+            bool far = true;
+            for (auto curve : curves)
+                if (distance_to(curve, QPointF(x, y)) < 40)
+                    far = false;
+            if (far) {
+                empty = QPointF(x, y);
+                found_empty = true;
+            }
+        }
+    QVERIFY(found_empty);
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, to_view(empty));
+    QCoreApplication::processEvents();
+    for (auto curve : curves)
+        QVERIFY(!curve->isHighlighted());
+    QCOMPARE(window.get_smry_xaxis(0)->get_xrange(), xrange);
+
+    // Dragging still zooms and does not highlight.
+    const QPoint from = to_view(plot.topLeft() + QPointF(plot.width() * 0.3, 10));
+    const QPoint to = to_view(plot.topLeft() + QPointF(plot.width() * 0.6, plot.height() - 10));
+    QTest::mousePress(view->viewport(), Qt::LeftButton, Qt::NoModifier, from);
+    QMouseEvent move(QEvent::MouseMove, to, view->viewport()->mapToGlobal(to), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(view->viewport(), &move);
+    QTest::mouseRelease(view->viewport(), Qt::LeftButton, Qt::NoModifier, to);
+    QCoreApplication::processEvents();
+    QVERIFY(window.get_smry_xaxis(0)->get_xrange() != xrange);
+    for (auto curve : curves)
+        QVERIFY(!curve->isHighlighted());
 }
 
 QDateTime make_date_from_ms(double mssepoc)

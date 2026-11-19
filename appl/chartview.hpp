@@ -46,10 +46,13 @@ protected:
 
     void keyPressEvent(QKeyEvent *event);
     void resizeEvent(QResizeEvent *event);
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
 
 
 private:
     int layout_legend(qreal font_scale);
+    QAbstractSeries* series_at(const QPointF& chart_pos, qreal tolerance) const;
 
     bool m_isTouching;
     QWidget *m_parent;
@@ -62,6 +65,8 @@ private:
     bool m_legend_visible = false;
     bool m_updating_legend = false;
     qreal m_non_plot_height = 100;
+    QPoint m_press_pos;
+    bool m_press_in_plot = false;
 };
 
 #endif

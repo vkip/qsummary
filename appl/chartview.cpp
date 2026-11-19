@@ -216,6 +216,76 @@ void ChartView::keyPressEvent(QKeyEvent *event)
     }
 }
 
+void ChartView::mousePressEvent(QMouseEvent *event)
+{
+    m_press_in_plot = event->button() == Qt::LeftButton
+        && m_chart->plotArea().contains(m_chart->mapFromScene(mapToScene(event->position().toPoint())));
+    m_press_pos = event->position().toPoint();
+
+    QChartView::mousePressEvent(event);
+}
+
+void ChartView::mouseReleaseEvent(QMouseEvent *event)
+{
+    const bool is_click = m_press_in_plot && event->button() == Qt::LeftButton
+        && (event->position().toPoint() - m_press_pos).manhattanLength() <= 3;
+    m_press_in_plot = false;
+
+    if (!is_click) {
+        QChartView::mouseReleaseEvent(event);
+        return;
+    }
+
+    // A plain click must not reach the rubber band, which would zoom into a tiny rectangle.
+    if (auto band = findChild<QRubberBand *>())
+        band->hide();
+
+    const QPointF chart_pos = m_chart->mapFromScene(mapToScene(m_press_pos));
+    if (auto series = series_at(chart_pos, 6.0)) {
+        const auto markers = m_chart->legend()->markers(series);
+        if (!markers.isEmpty()) {
+            emit markers.front()->clicked();
+            update_legend();
+        }
+    }
+
+    event->accept();
+}
+
+QAbstractSeries* ChartView::series_at(const QPointF& chart_pos, qreal tolerance) const
+{
+    QAbstractSeries* closest = nullptr;
+    qreal closest_dist = tolerance;
+
+    for (auto abstract_series : m_chart->series()) {
+        auto series = qobject_cast<QXYSeries *>(abstract_series);
+        if (!series || !series->isVisible() || series->count() == 0)
+            continue;
+
+        const auto points = series->points();
+        QPointF prev = m_chart->mapToPosition(points.front(), series);
+        qreal dist = QLineF(prev, chart_pos).length();
+
+        for (qsizetype n = 1; n < points.size(); ++n) {
+            const QPointF cur = m_chart->mapToPosition(points[n], series);
+            const QPointF seg = cur - prev;
+            const qreal len2 = QPointF::dotProduct(seg, seg);
+            qreal t = len2 > 0 ? QPointF::dotProduct(chart_pos - prev, seg) / len2 : 0;
+            t = std::clamp(t, qreal(0), qreal(1));
+            dist = std::min(dist, QLineF(prev + t * seg, chart_pos).length());
+            prev = cur;
+        }
+
+        // Ties go to the later series, which is drawn on top.
+        if (dist <= closest_dist) {
+            closest_dist = dist;
+            closest = series;
+        }
+    }
+
+    return closest;
+}
+
 void ChartView::resizeEvent(QResizeEvent *event)
 {
     if (scene()) {
